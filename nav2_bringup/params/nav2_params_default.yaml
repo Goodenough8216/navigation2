@@ -109,76 +109,135 @@ bt_navigator_navigate_to_pose_rclcpp_node:
   ros__parameters:
     use_sim_time: True
 
+# rpp控制器配置
 controller_server:
   ros__parameters:
-    use_sim_time: True
-    controller_frequency: 80.0 #20.0
+    controller_frequency: 80.0 # 20.0
     min_x_velocity_threshold: 0.001
     min_y_velocity_threshold: 0.5
     min_theta_velocity_threshold: 0.001
-    failure_tolerance: 0.3
-    progress_checker_plugin: "progress_checker"
-    goal_checker_plugins: ["general_goal_checker"] # "precise_goal_checker"
+    progress_checker_plugins: ["progress_checker"] # progress_checker_plugin: "progress_checker" For Humble and older
+    goal_checker_plugins: ["goal_checker"]
     controller_plugins: ["FollowPath"]
 
-    # Progress checker parameters
     progress_checker:
       plugin: "nav2_controller::SimpleProgressChecker"
       required_movement_radius: 0.5
       movement_time_allowance: 10.0
-    # Goal checker parameters
-    #precise_goal_checker:
-    #  plugin: "nav2_controller::SimpleGoalChecker"
-    #  xy_goal_tolerance: 0.25
-    #  yaw_goal_tolerance: 0.25
-    #  stateful: True
-    general_goal_checker:
-      stateful: True
+    goal_checker:
       plugin: "nav2_controller::SimpleGoalChecker"
       xy_goal_tolerance: 0.25
       yaw_goal_tolerance: 0.25
-    # DWB parameters
-    FollowPath:
-      plugin: "dwb_core::DWBLocalPlanner"
-      debug_trajectory_details: True
-      min_vel_x: 0.0
-      min_vel_y: 0.0
-      max_vel_x: 1.0 #0.26
-      max_vel_y: 0.0
-      max_vel_theta: 3.0 # 1.0
-      min_speed_xy: 0.0
-      max_speed_xy: 1.0 #0.26
-      min_speed_theta: 0.0
-      # Add high threshold velocity for turtlebot 3 issue.
-      # https://github.com/ROBOTIS-GIT/turtlebot3_simulations/issues/75
-      acc_lim_x: 2.5
-      acc_lim_y: 0.0
-      acc_lim_theta: 3.2
-      decel_lim_x: -2.5
-      decel_lim_y: 0.0
-      decel_lim_theta: -3.2
-      vx_samples: 20
-      vy_samples: 5
-      vtheta_samples: 20
-      sim_time: 1.7
-      linear_granularity: 0.05
-      angular_granularity: 0.025
-      transform_tolerance: 0.2
-      xy_goal_tolerance: 0.25
-      trans_stopped_velocity: 0.25
-      short_circuit_trajectory_evaluation: True
       stateful: True
-      critics: ["RotateToGoal", "Oscillation", "BaseObstacle", "GoalAlign", "PathAlign", "PathDist", "GoalDist"]
-      BaseObstacle.scale: 0.02
-      PathAlign.scale: 32.0
-      PathAlign.forward_point_distance: 0.1
-      GoalAlign.scale: 24.0
-      GoalAlign.forward_point_distance: 0.1
-      PathDist.scale: 32.0
-      GoalDist.scale: 24.0
-      RotateToGoal.scale: 32.0
-      RotateToGoal.slowing_factor: 5.0
-      RotateToGoal.lookahead_time: -1.0
+    FollowPath:
+      plugin: "nav2_regulated_pure_pursuit_controller::RegulatedPurePursuitController"
+      desired_linear_vel: 1.0 # 0.5
+      # max_linear_vel: 2.0 # 0.5
+      # min_linear_vel: -2.0 # -0.5
+      # max_angular_vel: 2.5
+      # min_angular_vel: -2.5
+      # max_linear_accel: 2.5
+      # max_linear_decel: -2.5
+      max_angular_accel: 3.2
+      # max_angular_decel: -3.2
+      lookahead_dist: 0.6
+      min_lookahead_dist: 0.3
+      max_lookahead_dist: 0.9
+      lookahead_time: 1.5
+      rotate_to_heading_angular_vel: 1.8
+      transform_tolerance: 0.1
+      use_velocity_scaled_lookahead_dist: false
+      min_approach_linear_velocity: 0.05
+      approach_velocity_scaling_dist: 0.6
+      use_collision_detection: true
+      max_allowed_time_to_collision_up_to_carrot: 1.0
+      use_regulated_linear_velocity_scaling: false  # true
+      # use_fixed_curvature_lookahead: false
+      # curvature_lookahead_dist: 0.25
+      use_cost_regulated_linear_velocity_scaling: false
+      cost_scaling_dist: 0.3
+      cost_scaling_gain: 1.0
+      inflation_cost_scaling_factor: 3.0
+      regulated_linear_scaling_min_radius: 0.9
+      regulated_linear_scaling_min_speed: 0.25 # 0.25
+      use_rotate_to_heading: false # true
+      allow_reversing: true # false
+      rotate_to_heading_min_angle: 0.785 # 0.785
+      min_distance_to_obstacle: 0.0
+      # stateful: true
+      # use_dynamic_window: false
+      use_interpolation: true
+# dwb控制器配置
+# controller_server:
+#   ros__parameters:
+#     use_sim_time: True
+#     controller_frequency: 80.0 #20.0
+#     min_x_velocity_threshold: 0.001
+#     min_y_velocity_threshold: 0.5
+#     min_theta_velocity_threshold: 0.001
+#     failure_tolerance: 0.3
+#     progress_checker_plugin: "progress_checker"
+#     goal_checker_plugins: ["general_goal_checker"] # "precise_goal_checker"
+#     controller_plugins: ["FollowPath"]
+
+#     # Progress checker parameters
+#     progress_checker:
+#       plugin: "nav2_controller::SimpleProgressChecker"
+#       required_movement_radius: 0.5
+#       movement_time_allowance: 10.0
+#     # Goal checker parameters
+#     #precise_goal_checker:
+#     #  plugin: "nav2_controller::SimpleGoalChecker"
+#     #  xy_goal_tolerance: 0.25
+#     #  yaw_goal_tolerance: 0.25
+#     #  stateful: True
+#     general_goal_checker:
+#       stateful: True
+#       plugin: "nav2_controller::SimpleGoalChecker"
+#       xy_goal_tolerance: 0.25
+#       yaw_goal_tolerance: 0.25
+#     # Declared types are  dwb_core::DWBLocalPlanner nav2_graceful_controller::GracefulController nav2_mppi_controller::MPPIController nav2_regulated_pure_pursuit_controller::RegulatedPurePursuitController nav2_rotation_shim_controller::RotationShimController
+#     FollowPath:
+#       plugin: "dwb_core::DWBLocalPlanner"
+#       debug_trajectory_details: True
+#       min_vel_x: 0.0
+#       min_vel_y: 0.0
+#       max_vel_x: 1.0 #0.26
+#       max_vel_y: 0.0
+#       max_vel_theta: 3.0 # 1.0
+#       min_speed_xy: 0.0
+#       max_speed_xy: 1.0 #0.26
+#       min_speed_theta: 0.0
+#       # Add high threshold velocity for turtlebot 3 issue.
+#       # https://github.com/ROBOTIS-GIT/turtlebot3_simulations/issues/75
+#       acc_lim_x: 2.5
+#       acc_lim_y: 0.0
+#       acc_lim_theta: 3.2
+#       decel_lim_x: -2.5
+#       decel_lim_y: 0.0
+#       decel_lim_theta: -3.2
+#       vx_samples: 20
+#       vy_samples: 5
+#       vtheta_samples: 20
+#       sim_time: 1.7
+#       linear_granularity: 0.05
+#       angular_granularity: 0.025
+#       transform_tolerance: 0.2
+#       xy_goal_tolerance: 0.25
+#       trans_stopped_velocity: 0.25
+#       short_circuit_trajectory_evaluation: True
+#       stateful: True
+#       critics: ["RotateToGoal", "Oscillation", "BaseObstacle", "GoalAlign", "PathAlign", "PathDist", "GoalDist"]
+#       BaseObstacle.scale: 0.02
+#       PathAlign.scale: 32.0
+#       PathAlign.forward_point_distance: 0.1
+#       GoalAlign.scale: 24.0
+#       GoalAlign.forward_point_distance: 0.1
+#       PathDist.scale: 32.0
+#       GoalDist.scale: 24.0
+#       RotateToGoal.scale: 32.0
+#       RotateToGoal.slowing_factor: 5.0
+#       RotateToGoal.lookahead_time: -1.0
 
 # local_costmap:
 #   local_costmap:
@@ -266,16 +325,16 @@ local_costmap:
 
       inflation_layer:
         plugin: "nav2_costmap_2d::InflationLayer"
-        cost_scaling_factor: 3.0
-        inflation_radius: 0.55
+        cost_scaling_factor: 0.1 # 3.0
+        inflation_radius: 0.1 # 0.55
 
       always_send_full_costmap: True
       
 global_costmap:
   global_costmap:
     ros__parameters:
-      update_frequency: 1.0
-      publish_frequency: 1.0
+      update_frequency: 2.0 # 1.0
+      publish_frequency: 5.0  # 1.0
       global_frame: map
       robot_base_frame: base_link
       use_sim_time: True
@@ -304,8 +363,8 @@ global_costmap:
         map_subscribe_transient_local: True
       inflation_layer:
         plugin: "nav2_costmap_2d::InflationLayer"
-        cost_scaling_factor: 3.0
-        inflation_radius: 0.55
+        cost_scaling_factor: 3.0 # 3.0
+        inflation_radius: 1.50 # 0.55
       always_send_full_costmap: True
 
 map_server:
@@ -325,14 +384,14 @@ map_saver:
 
 planner_server:
   ros__parameters:
-    expected_planner_frequency: 80.0 # 20.0
+    expected_planner_frequency: 20.0 # 20.0
     use_sim_time: True
     planner_plugins: ["GridBased"]
     GridBased:
       plugin: "nav2_navfn_planner/NavfnPlanner"
       tolerance: 0.5
       use_astar: false
-      allow_unknown: true
+      allow_unknown: true # true
 
 smoother_server:
   ros__parameters:
@@ -376,7 +435,7 @@ robot_state_publisher:
 waypoint_follower:
   ros__parameters:
     use_sim_time: True
-    loop_rate: 80 # 20
+    loop_rate: 20 # 20
     stop_on_failure: false
     waypoint_task_executor_plugin: "wait_at_waypoint"
     wait_at_waypoint:
@@ -387,7 +446,7 @@ waypoint_follower:
 velocity_smoother:
   ros__parameters:
     use_sim_time: True
-    smoothing_frequency: 80.0 # 20.0
+    smoothing_frequency: 20.0 # 20.0
     scale_velocities: False
     feedback: "OPEN_LOOP"
     max_velocity: [1.0, 0.0, 3.0] # 0.26 0 1.0
