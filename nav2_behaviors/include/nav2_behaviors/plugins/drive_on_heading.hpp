@@ -162,11 +162,13 @@ public:
     pose2d.y = current_pose.pose.position.y;
     pose2d.theta = tf2::getYaw(current_pose.pose.orientation);
 
-    if (!isCollisionFree(distance, cmd_vel.get(), pose2d)) {
-      this->stopRobot();
-      RCLCPP_WARN(this->logger_, "Collision Ahead - Exiting DriveOnHeading");
-      return Status::FAILED;
-    }
+    // 为了避免贴墙卡死，暂时关闭碰撞检测
+    // XXX 可能需要提取参数到yaml中，允许用户选择是否开启碰撞检测
+    // if (!isCollisionFree(distance, cmd_vel.get(), pose2d)) {
+    //   this->stopRobot();
+    //   RCLCPP_WARN(this->logger_, "Collision Ahead - Exiting DriveOnHeading");
+    //   return Status::FAILED;
+    // }
 
     last_vel_ = cmd_vel->linear.x;
     this->vel_pub_->publish(std::move(cmd_vel));

@@ -146,11 +146,13 @@ Status Spin::onCycleUpdate()
   pose2d.y = current_pose.pose.position.y;
   pose2d.theta = tf2::getYaw(current_pose.pose.orientation);
 
-  if (!isCollisionFree(relative_yaw_, cmd_vel.get(), pose2d)) {
-    stopRobot();
-    RCLCPP_WARN(logger_, "Collision Ahead - Exiting Spin");
-    return Status::FAILED;
-  }
+  // 为了避免贴墙卡死，暂时关闭碰撞检测 
+  // XXX 可能需要提取参数到yaml中，允许用户选择是否开启碰撞检测
+  // if (!isCollisionFree(relative_yaw_, cmd_vel.get(), pose2d)) {
+  //   stopRobot();
+  //   RCLCPP_WARN(logger_, "Collision Ahead - Exiting Spin");
+  //   return Status::FAILED;
+  // }
 
   vel_pub_->publish(std::move(cmd_vel));
 

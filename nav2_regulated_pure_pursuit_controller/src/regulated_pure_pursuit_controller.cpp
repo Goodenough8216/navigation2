@@ -197,6 +197,8 @@ void RegulatedPurePursuitController::configure(
     allow_reversing_ = false;
   }
 
+  goal_pose_reached_ = false;
+
   global_path_pub_ = node->create_publisher<nav_msgs::msg::Path>("received_global_plan", 1);
   carrot_pub_ = node->create_publisher<geometry_msgs::msg::PointStamped>("lookahead_point", 1);
   carrot_arc_pub_ = node->create_publisher<nav_msgs::msg::Path>("lookahead_collision_arc", 1);
@@ -340,9 +342,28 @@ geometry_msgs::msg::TwistStamped RegulatedPurePursuitController::computeVelocity
   double angle_to_heading;
   if (shouldRotateToGoalHeading(carrot_pose)) {
     double angle_to_goal = tf2::getYaw(transformed_plan.poses.back().pose.orientation);
-    rotateToHeading(linear_vel, angular_vel, angle_to_goal, speed);
-  } else if (shouldRotateToPath(carrot_pose, angle_to_heading)) {
+    // 适配允许倒车（逆向）行驶
+    if(allow_reversing_) {// 这里应该用transformed_plan的朝向的反向来算，注意限制角度的范围
+      double angle_to_reverse_goal = (tf2::getYaw(transformed_plan.poses.back().pose.orientation) + M_PI);
+      // 限制角度范围在 [-M_PI, M_PI]
+      while (angle_to_reverse_goal > M_PI) {
+        angle_to_reverse_goal -= 2 * M_PI;
+      }
+      while (angle_to_reverse_goal < -M_PI) {
+        angle_to_reverse_goal += 2 * M_PI;
+      }
+      if (fabs(angle_to_reverse_goal) < fabs(angle_to_goal)) {
+        angle_to_goal = angle_to_reverse_goal;
+      }
+    }
+    // 到目标点，就不用考虑方向了，没意义，直接停车
+    linear_vel = 0.0;
+    angular_vel = 0.0;
+    goal_pose_reached_ = true; // 目标到达了，也意味着开始新的路径了，下一次如果路径方向不对就先转向再走
+    // rotateToHeading(linear_vel, angular_vel, angle_to_goal, speed);
+  } else if (goal_pose_reached_ && shouldRotateToPath(carrot_pose, angle_to_heading)) {
     rotateToHeading(linear_vel, angular_vel, angle_to_heading, speed);
+    goal_pose_reached_ = false;  
   } else {
     applyConstraints(
       curvature, speed,
@@ -350,7 +371,7 @@ geometry_msgs::msg::TwistStamped RegulatedPurePursuitController::computeVelocity
       linear_vel, sign);
 
     // Apply curvature to angular velocity after constraining linear velocity
-    angular_vel = linear_vel * curvature;
+    angular_vel = linear_vel * curvature ;
   }
 
   // Collision checking on this velocity heading
@@ -358,7 +379,8 @@ geometry_msgs::msg::TwistStamped RegulatedPurePursuitController::computeVelocity
   if (use_collision_detection_ && isCollisionImminent(pose, linear_vel, angular_vel, carrot_dist)) {
     throw nav2_core::PlannerException("RegulatedPurePursuitController detected collision ahead!");
   }
-
+  // // 打印线速度
+  // RCLCPP_INFO(logger_, "Computed velocities: linear_vel=%f, angular_vel=%f", linear_vel, angular_vel);
   // populate and return message
   geometry_msgs::msg::TwistStamped cmd_vel;
   cmd_vel.header = pose.header;
@@ -372,7 +394,15 @@ bool RegulatedPurePursuitController::shouldRotateToPath(
 {
   // Whether we should rotate robot to rough path heading
   angle_to_path = atan2(carrot_pose.pose.position.y, carrot_pose.pose.position.x);
-  return use_rotate_to_heading_ && fabs(angle_to_path) > rotate_to_heading_min_angle_;
+  // 适配允许倒车（逆向）行驶
+  if(allow_reversing_) {
+    double angle_to_reverse_path = atan2(-carrot_pose.pose.position.y, -carrot_pose.pose.position.x);
+    if (fabs(angle_to_reverse_path) < fabs(angle_to_path)) {
+      angle_to_path = angle_to_reverse_path;
+    }
+  }
+  return (use_rotate_to_heading_ || allow_reversing_) && fabs(angle_to_path) > rotate_to_heading_min_angle_;
+  // return use_rotate_to_heading_ && fabs(angle_to_path) > rotate_to_heading_min_angle_;
 }
 
 bool RegulatedPurePursuitController::shouldRotateToGoalHeading(
@@ -380,7 +410,8 @@ bool RegulatedPurePursuitController::shouldRotateToGoalHeading(
 {
   // Whether we should rotate robot to goal heading
   double dist_to_goal = std::hypot(carrot_pose.pose.position.x, carrot_pose.pose.position.y);
-  return use_rotate_to_heading_ && dist_to_goal < goal_dist_tol_;
+  return (use_rotate_to_heading_ || allow_reversing_) && dist_to_goal < goal_dist_tol_;
+  // return use_rotate_to_heading_ && dist_to_goal < goal_dist_tol_;
 }
 
 void RegulatedPurePursuitController::rotateToHeading(
@@ -392,13 +423,21 @@ void RegulatedPurePursuitController::rotateToHeading(
   const double sign = angle_to_path > 0.0 ? 1.0 : -1.0;
   angular_vel = sign * rotate_to_heading_angular_vel_;
 
+  // // 打印angular_vel
+  // RCLCPP_INFO(logger_, "Rotating to heading: angular_vel=%f", angular_vel);
   const double & dt = control_duration_;
   const double min_feasible_angular_speed = curr_speed.angular.z - max_angular_accel_ * dt;
   const double max_feasible_angular_speed = curr_speed.angular.z + max_angular_accel_ * dt;
   angular_vel = std::clamp(angular_vel, min_feasible_angular_speed, max_feasible_angular_speed);
-
+  // // 打印日志，显示当前角速度curr_speed.angular.z和需要旋转的角度，还有angular_vel min_feasible_angular_speed max_feasible_angular_speed
+  // RCLCPP_INFO(
+  //   logger_,
+  //   "Rotating to heading: curr_speed.angular.z=%f, angle_to_path=%f, angular_vel=%f, min_feasible_angular_speed=%f, max_feasible_angular_speed=%f",
+  //   curr_speed.angular.z, angle_to_path, angular_vel, min_feasible_angular_speed, max_feasible_angular_speed);
   // Check if we need to slow down to avoid overshooting
   double max_vel_to_stop = std::sqrt(2 * max_angular_accel_ * fabs(angle_to_path));
+  // // 打印max_vel_to_stop和angle_to_path
+  // RCLCPP_INFO(logger_, "Rotating to heading: max_vel_to_stop=%f, angle_to_path=%f", max_vel_to_stop, angle_to_path);
   if (fabs(angular_vel) > max_vel_to_stop) {
     angular_vel = sign * max_vel_to_stop;
   }
@@ -664,9 +703,14 @@ void RegulatedPurePursuitController::applyConstraints(
   // Use the lowest of the 2 constraint heuristics, but above the minimum translational speed
   linear_vel = std::min(cost_vel, curvature_vel);
   linear_vel = std::max(linear_vel, regulated_linear_scaling_min_speed_);
-
+  // // 打印此时线速度
+  // RCLCPP_INFO(
+  //   logger_, "Velocity constraints: curvature_vel=%f, cost_vel=%f, final linear_vel=%f",
+  //   curvature_vel, cost_vel, linear_vel);
   applyApproachVelocityScaling(path, linear_vel);
-
+  // // 打印此时线速度
+  // RCLCPP_INFO(
+  //   logger_, "After approach velocity scaling: linear_vel=%f", linear_vel);
   // Limit linear velocities to be valid
   linear_vel = std::clamp(fabs(linear_vel), 0.0, desired_linear_vel_);
   linear_vel = sign * linear_vel;
