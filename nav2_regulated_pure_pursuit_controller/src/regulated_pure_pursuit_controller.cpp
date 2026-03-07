@@ -341,26 +341,26 @@ geometry_msgs::msg::TwistStamped RegulatedPurePursuitController::computeVelocity
   // Make sure we're in compliance with basic constraints
   double angle_to_heading;
   if (shouldRotateToGoalHeading(carrot_pose)) {
-    double angle_to_goal = tf2::getYaw(transformed_plan.poses.back().pose.orientation);
-    // 适配允许倒车（逆向）行驶
-    if(allow_reversing_) {// 这里应该用transformed_plan的朝向的反向来算，注意限制角度的范围
-      double angle_to_reverse_goal = (tf2::getYaw(transformed_plan.poses.back().pose.orientation) + M_PI);
-      // 限制角度范围在 [-M_PI, M_PI]
-      while (angle_to_reverse_goal > M_PI) {
-        angle_to_reverse_goal -= 2 * M_PI;
-      }
-      while (angle_to_reverse_goal < -M_PI) {
-        angle_to_reverse_goal += 2 * M_PI;
-      }
-      if (fabs(angle_to_reverse_goal) < fabs(angle_to_goal)) {
-        angle_to_goal = angle_to_reverse_goal;
-      }
-    }
+    // double angle_to_goal = tf2::getYaw(transformed_plan.poses.back().pose.orientation);
+    // // 适配允许倒车（逆向）行驶
+    // if(allow_reversing_) {// 这里应该用transformed_plan的朝向的反向来算，注意限制角度的范围
+    //   double angle_to_reverse_goal = (tf2::getYaw(transformed_plan.poses.back().pose.orientation) + M_PI);
+    //   // 限制角度范围在 [-M_PI, M_PI]
+    //   while (angle_to_reverse_goal > M_PI) {
+    //     angle_to_reverse_goal -= 2 * M_PI;
+    //   }
+    //   while (angle_to_reverse_goal < -M_PI) {
+    //     angle_to_reverse_goal += 2 * M_PI;
+    //   }
+    //   if (fabs(angle_to_reverse_goal) < fabs(angle_to_goal)) {
+    //     angle_to_goal = angle_to_reverse_goal;
+    //   }
+    // }
+    // rotateToHeading(linear_vel, angular_vel, angle_to_goal, speed);
     // 到目标点，就不用考虑方向了，没意义，直接停车
     linear_vel = 0.0;
     angular_vel = 0.0;
     goal_pose_reached_ = true; // 目标到达了，也意味着开始新的路径了，下一次如果路径方向不对就先转向再走
-    // rotateToHeading(linear_vel, angular_vel, angle_to_goal, speed);
   } else if (goal_pose_reached_ && shouldRotateToPath(carrot_pose, angle_to_heading)) {
     rotateToHeading(linear_vel, angular_vel, angle_to_heading, speed);
     goal_pose_reached_ = false;  

@@ -19,6 +19,7 @@
 
 #include "drive_on_heading.hpp"
 #include "nav2_msgs/action/back_up.hpp"
+#include "geometry_msgs/msg/twist.hpp"
 
 using BackUpAction = nav2_msgs::action::BackUp;
 
@@ -29,7 +30,18 @@ class BackUp : public DriveOnHeading<nav2_msgs::action::BackUp>
 {
 public:
   Status onRun(const std::shared_ptr<const BackUpAction::Goal> command) override;
-};
-}
 
+  // void onActionCompletion() override;  // if exists, keep; else skip
+
+protected:
+  /**
+   * @brief Callback to record the sign of the last cmd_vel
+   */
+  void cmdVelCallback(const geometry_msgs::msg::Twist::SharedPtr msg);
+
+  rclcpp::Subscription<geometry_msgs::msg::Twist>::SharedPtr cmd_vel_sub_;
+  double last_linear_x_sign_{1.0};  // default: forward is +x
+};
+
+}  // namespace nav2_behaviors
 #endif  // NAV2_BEHAVIORS__PLUGINS__BACK_UP_HPP_

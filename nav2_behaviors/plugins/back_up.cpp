@@ -17,8 +17,23 @@
 namespace nav2_behaviors
 {
 
+void BackUp::cmdVelCallback(const geometry_msgs::msg::Twist::SharedPtr msg)
+{
+  // 只在有明确线速度时更新符号，避免停止指令覆盖符号
+  if (std::fabs(msg->linear.x) > 1e-3) {
+    last_linear_x_sign_ = (msg->linear.x > 0.0) ? 1.0 : -1.0;
+  }
+}
+
 Status BackUp::onRun(const std::shared_ptr<const BackUpAction::Goal> command)
 {
+  // 延迟初始化订阅（node_ 在基类构造后才可用）
+  if (!cmd_vel_sub_) {
+    cmd_vel_sub_ = node_.lock()->create_subscription<geometry_msgs::msg::Twist>(
+      "/cmd_vel", rclcpp::SystemDefaultsQoS(),
+      std::bind(&BackUp::cmdVelCallback, this, std::placeholders::_1));
+  }
+
   if (command->target.y != 0.0 || command->target.z != 0.0) {
     RCLCPP_INFO(
       logger_,
@@ -26,9 +41,9 @@ Status BackUp::onRun(const std::shared_ptr<const BackUpAction::Goal> command)
     return Status::FAILED;
   }
 
-  // Silently ensure that both the speed and direction are negative.
-  command_x_ = -std::fabs(command->target.x);
-  command_speed_ = -std::fabs(command->speed);
+  // 用最近速度的符号决定"倒车"方向（与上次运动方向相反）
+  command_x_ = -last_linear_x_sign_ * std::fabs(command->target.x);
+  command_speed_ = -last_linear_x_sign_ * std::fabs(command->speed);
   command_time_allowance_ = command->time_allowance;
 
   end_time_ = this->clock_->now() + command_time_allowance_;
