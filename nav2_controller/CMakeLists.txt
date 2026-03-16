@@ -9,6 +9,9 @@ find_package(rclcpp REQUIRED)
 find_package(rclcpp_action REQUIRED)
 find_package(rclcpp_components REQUIRED)
 find_package(std_msgs REQUIRED)
+find_package(nav_msgs REQUIRED)
+find_package(gazebo_msgs REQUIRED)
+find_package(tf2 REQUIRED)
 find_package(nav2_util REQUIRED)
 find_package(nav2_msgs REQUIRED)
 find_package(nav_2d_utils REQUIRED)
@@ -39,6 +42,9 @@ set(dependencies
   rclcpp_action
   rclcpp_components
   std_msgs
+  nav_msgs
+  gazebo_msgs
+  tf2
   nav2_msgs
   nav_2d_utils
   nav_2d_msgs

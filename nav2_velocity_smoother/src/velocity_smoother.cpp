@@ -13,13 +13,16 @@
 // limitations under the License.
 
 #include <chrono>
+#include <cmath>
 #include <limits>
 #include <memory>
 #include <string>
 #include <utility>
 #include <vector>
+#include <algorithm>
 
 #include "nav2_velocity_smoother/velocity_smoother.hpp"
+#include "tf2/utils.h"
 
 using namespace std::chrono_literals;
 using nav2_util::declare_parameter_if_not_declared;
@@ -91,11 +94,15 @@ VelocitySmoother::on_configure(const rclcpp_lifecycle::State &)
 
   // Get feature parameters
   declare_parameter_if_not_declared(node, "odom_topic", rclcpp::ParameterValue("odom"));
+  declare_parameter_if_not_declared(node, "yaw_odom_topic", rclcpp::ParameterValue("/odometry_imu"));
+  declare_parameter_if_not_declared(node, "robot_model_name", rclcpp::ParameterValue("mbot"));
   declare_parameter_if_not_declared(node, "odom_duration", rclcpp::ParameterValue(0.1));
   declare_parameter_if_not_declared(
     node, "deadband_velocity", rclcpp::ParameterValue(std::vector<double>{0.0, 0.0, 0.0}));
   declare_parameter_if_not_declared(node, "velocity_timeout", rclcpp::ParameterValue(1.0));
   node->get_parameter("odom_topic", odom_topic_);
+  node->get_parameter("yaw_odom_topic", yaw_odom_topic_);
+  node->get_parameter("robot_model_name", robot_model_name_);
   node->get_parameter("odom_duration", odom_duration_);
   node->get_parameter("deadband_velocity", deadband_velocities_);
   node->get_parameter("velocity_timeout", velocity_timeout_dbl);
@@ -121,9 +128,17 @@ VelocitySmoother::on_configure(const rclcpp_lifecycle::State &)
 
   // Setup inputs / outputs
   smoothed_cmd_pub_ = create_publisher<geometry_msgs::msg::Twist>("cmd_vel_smoothed", 1);
+  sentry_speed_pub_ = create_publisher<sentry_msgs::msg::CtrlInfo4Planning2ElctricCtrl>(
+    "/sentry_des_speed", 1);
   cmd_sub_ = create_subscription<geometry_msgs::msg::Twist>(
     "cmd_vel", rclcpp::QoS(1),
     std::bind(&VelocitySmoother::inputCommandCallback, this, std::placeholders::_1));
+  odom_sub_ = create_subscription<nav_msgs::msg::Odometry>(
+    yaw_odom_topic_, rclcpp::SensorDataQoS(),
+    std::bind(&VelocitySmoother::odomCallback, this, std::placeholders::_1));
+  model_states_sub_ = create_subscription<gazebo_msgs::msg::ModelStates>(
+    "/gazebo/model_states", rclcpp::QoS(10),
+    std::bind(&VelocitySmoother::modelStatesCallback, this, std::placeholders::_1));
 
   return nav2_util::CallbackReturn::SUCCESS;
 }
@@ -133,6 +148,7 @@ VelocitySmoother::on_activate(const rclcpp_lifecycle::State &)
 {
   RCLCPP_INFO(get_logger(), "Activating");
   smoothed_cmd_pub_->on_activate();
+  sentry_speed_pub_->on_activate();
   double timer_duration_ms = 1000.0 / smoothing_frequency_;
   timer_ = this->create_wall_timer(
     std::chrono::milliseconds(static_cast<int>(timer_duration_ms)),
@@ -155,6 +171,7 @@ VelocitySmoother::on_deactivate(const rclcpp_lifecycle::State &)
     timer_.reset();
   }
   smoothed_cmd_pub_->on_deactivate();
+  sentry_speed_pub_->on_deactivate();
   dyn_params_handler_.reset();
 
   // destroy bond connection
@@ -167,8 +184,11 @@ VelocitySmoother::on_cleanup(const rclcpp_lifecycle::State &)
 {
   RCLCPP_INFO(get_logger(), "Cleaning up");
   smoothed_cmd_pub_.reset();
+  sentry_speed_pub_.reset();
   odom_smoother_.reset();
   cmd_sub_.reset();
+  odom_sub_.reset();
+  model_states_sub_.reset();
   return nav2_util::CallbackReturn::SUCCESS;
 }
 
@@ -320,7 +340,84 @@ void VelocitySmoother::smootherTimer()
   cmd_vel->angular.z = fabs(cmd_vel->angular.z) <
     deadband_velocities_[2] ? 0.0 : cmd_vel->angular.z;
 
+  // Build and publish sentry control info with current and desired yaw.
+  double dt = calculateInterval(last_yaw_update_time_);
+  // if (dt <= 0.0 && smoothing_frequency_ > 0.0) {
+    dt = 1.0 / smoothing_frequency_;
+  // }
+
+  double current_yaw = 0.0;
+  {
+    std::lock_guard<std::mutex> lock(odom_mutex_);
+    current_yaw = current_yaw_;
+  }
+
+  constexpr double pi = 3.14159265358979323846;
+  double desired_yaw = current_yaw + cmd_vel->angular.z * dt;
+  while (desired_yaw > pi) {
+    desired_yaw -= 2.0 * pi;
+  }
+  while (desired_yaw < -pi) {
+    desired_yaw += 2.0 * pi;
+  }
+
+  sentry_msgs::msg::CtrlInfo4Planning2ElctricCtrl sentry_msg;
+  sentry_msg.line_speed = static_cast<float>(cmd_vel->linear.x);
+  sentry_msg.angle_target = static_cast<float>(desired_yaw);
+  sentry_msg.angle_current = static_cast<float>(current_yaw);
+  sentry_msg.xtl_flag = 1;
+  sentry_msg.in_bridge = 0;
+  sentry_msg.acceleration = 0.0f;
+  sentry_msg.angular_velocity = static_cast<float>(cmd_vel->angular.z);
+  if (sentry_speed_pub_->is_activated()) {
+    sentry_speed_pub_->publish(sentry_msg);
+  }
+
   smoothed_cmd_pub_->publish(std::move(cmd_vel));
+}
+
+void VelocitySmoother::odomCallback(const nav_msgs::msg::Odometry::SharedPtr msg)
+{
+  std::lock_guard<std::mutex> lock(odom_mutex_);
+  current_yaw_ = tf2::getYaw(msg->pose.pose.orientation);
+  has_odom_ = true;
+}
+
+void VelocitySmoother::modelStatesCallback(const gazebo_msgs::msg::ModelStates::SharedPtr msg)
+{
+  if (msg->pose.empty() || msg->name.empty()) {
+    return;
+  }
+
+  size_t pose_idx = 0;
+  if (!robot_model_name_.empty()) {
+    auto it = std::find(msg->name.begin(), msg->name.end(), robot_model_name_);
+    if (it == msg->name.end()) {
+      return;
+    }
+    pose_idx = static_cast<size_t>(std::distance(msg->name.begin(), it));
+  }
+
+  if (pose_idx >= msg->pose.size()) {
+    return;
+  }
+
+  std::lock_guard<std::mutex> lock(odom_mutex_);
+  current_yaw_ = tf2::getYaw(msg->pose[pose_idx].orientation);
+  has_odom_ = true;
+}
+
+double VelocitySmoother::calculateInterval(rclcpp::Time & last_time)
+{
+  rclcpp::Time current_time = now();
+  double interval = 0.0;
+
+  if (last_time.nanoseconds() != 0) {
+    interval = (current_time - last_time).seconds();
+  }
+
+  last_time = current_time;
+  return interval;
 }
 
 rcl_interfaces::msg::SetParametersResult
@@ -408,6 +505,8 @@ VelocitySmoother::dynamicParametersCallback(std::vector<rclcpp::Parameter> param
         odom_smoother_ =
           std::make_unique<nav2_util::OdomSmoother>(
           shared_from_this(), odom_duration_, odom_topic_);
+      } else if (name == "robot_model_name") {
+        robot_model_name_ = parameter.as_string();
       }
     }
   }

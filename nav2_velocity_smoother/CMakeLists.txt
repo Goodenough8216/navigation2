@@ -6,6 +6,10 @@ find_package(nav2_common REQUIRED)
 find_package(rclcpp REQUIRED)
 find_package(rclcpp_components REQUIRED)
 find_package(geometry_msgs REQUIRED)
+find_package(gazebo_msgs REQUIRED)
+find_package(nav_msgs REQUIRED)
+find_package(sentry_msgs REQUIRED)
+find_package(tf2 REQUIRED)
 find_package(nav2_util REQUIRED)
 
 if(NOT CMAKE_CXX_STANDARD)
@@ -25,6 +29,10 @@ set(dependencies
   rclcpp
   rclcpp_components
   geometry_msgs
+  gazebo_msgs
+  nav_msgs
+  sentry_msgs
+  tf2
   nav2_util
 )
 

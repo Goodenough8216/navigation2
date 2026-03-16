@@ -18,10 +18,14 @@
 #include <chrono>
 #include <limits>
 #include <memory>
+#include <mutex>
 #include <string>
 #include <utility>
 #include <vector>
 
+#include "gazebo_msgs/msg/model_states.hpp"
+#include "nav_msgs/msg/odometry.hpp"
+#include "sentry_msgs/msg/ctrl_info4_planning2_elctric_ctrl.hpp"
 #include "nav2_util/lifecycle_node.hpp"
 #include "nav2_util/node_utils.hpp"
 #include "nav2_util/odometry_utils.hpp"
@@ -120,6 +124,12 @@ protected:
    */
   void smootherTimer();
 
+  void odomCallback(const nav_msgs::msg::Odometry::SharedPtr msg);
+
+  void modelStatesCallback(const gazebo_msgs::msg::ModelStates::SharedPtr msg);
+
+  double calculateInterval(rclcpp::Time & last_time);
+
   /**
    * @brief Dynamic reconfigure callback
    * @param parameters Parameter list to change
@@ -131,7 +141,11 @@ protected:
   std::unique_ptr<nav2_util::OdomSmoother> odom_smoother_;
   rclcpp_lifecycle::LifecyclePublisher<geometry_msgs::msg::Twist>::SharedPtr
     smoothed_cmd_pub_;
+  rclcpp_lifecycle::LifecyclePublisher<sentry_msgs::msg::CtrlInfo4Planning2ElctricCtrl>::SharedPtr
+    sentry_speed_pub_;
   rclcpp::Subscription<geometry_msgs::msg::Twist>::SharedPtr cmd_sub_;
+  rclcpp::Subscription<nav_msgs::msg::Odometry>::SharedPtr odom_sub_;
+  rclcpp::Subscription<gazebo_msgs::msg::ModelStates>::SharedPtr model_states_sub_;
   rclcpp::TimerBase::SharedPtr timer_;
 
   rclcpp::Clock::SharedPtr clock_;
@@ -142,6 +156,8 @@ protected:
   double smoothing_frequency_;
   double odom_duration_;
   std::string odom_topic_;
+  std::string yaw_odom_topic_;
+  std::string robot_model_name_;
   bool open_loop_;
   bool stopped_{true};
   bool scale_velocities_;
@@ -152,6 +168,10 @@ protected:
   std::vector<double> deadband_velocities_;
   rclcpp::Duration velocity_timeout_{0, 0};
   rclcpp::Time last_command_time_;
+  rclcpp::Time last_yaw_update_time_;
+  std::mutex odom_mutex_;
+  double current_yaw_ {0.0};
+  bool has_odom_ {false};
 
   rclcpp::node_interfaces::OnSetParametersCallbackHandle::SharedPtr dyn_params_handler_;
 };

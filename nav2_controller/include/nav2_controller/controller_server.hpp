@@ -30,6 +30,9 @@
 #include "nav2_msgs/action/follow_path.hpp"
 #include "nav2_msgs/msg/speed_limit.hpp"
 #include "nav_2d_utils/odom_subscriber.hpp"
+#include "nav_msgs/msg/odometry.hpp"
+#include "gazebo_msgs/msg/model_states.hpp"
+#include "std_msgs/msg/float64.hpp"
 #include "nav2_util/lifecycle_node.hpp"
 #include "nav2_util/simple_action_server.hpp"
 #include "nav2_util/robot_utils.hpp"
@@ -161,10 +164,16 @@ protected:
    * @param velocity Twist velocity to be published
    */
   void publishVelocity(const geometry_msgs::msg::TwistStamped & velocity);
+
+  void publishYawFromAngularVel(const double angular_vel);
   /**
    * @brief Calls velocity publisher to publish zero velocity
    */
   void publishZeroVelocity();
+
+  void startContinuousZeroVelocity();
+
+  void stopContinuousZeroVelocity();
   /**
    * @brief Checks if goal is reached
    * @return true or false
@@ -176,6 +185,12 @@ protected:
    * @return true if able to obtain current pose of the robot, else false
    */
   bool getRobotPose(geometry_msgs::msg::PoseStamped & pose);
+
+  void odomCallback(const nav_msgs::msg::Odometry::SharedPtr msg);
+
+  void modelStatesCallback(const gazebo_msgs::msg::ModelStates::SharedPtr msg);
+
+  double calculateInterval(rclcpp::Time & last_time);
 
   /**
    * @brief get the thresholded velocity
@@ -220,7 +235,12 @@ protected:
   // Publishers and subscribers
   std::unique_ptr<nav_2d_utils::OdomSubscriber> odom_sub_;
   rclcpp_lifecycle::LifecyclePublisher<geometry_msgs::msg::Twist>::SharedPtr vel_publisher_;
+  rclcpp_lifecycle::LifecyclePublisher<std_msgs::msg::Float64>::SharedPtr desired_yaw_pub_;
+  rclcpp_lifecycle::LifecyclePublisher<std_msgs::msg::Float64>::SharedPtr current_yaw_pub_;
   rclcpp::Subscription<nav2_msgs::msg::SpeedLimit>::SharedPtr speed_limit_sub_;
+  rclcpp::Subscription<nav_msgs::msg::Odometry>::SharedPtr odom_yaw_sub_;
+  rclcpp::Subscription<gazebo_msgs::msg::ModelStates>::SharedPtr model_states_sub_;
+  rclcpp::TimerBase::SharedPtr zero_velocity_timer_;
 
   // Progress Checker Plugin
   pluginlib::ClassLoader<nav2_core::ProgressChecker> progress_checker_loader_;
@@ -264,6 +284,13 @@ protected:
 
   // Current path container
   nav_msgs::msg::Path current_path_;
+
+  std::mutex odom_mutex_;
+  double current_yaw_ {0.0};
+  bool has_odom_ {false};
+  std::string robot_model_name_;
+  rclcpp::Time last_yaw_update_time_;
+  bool continuous_zero_velocity_active_ {false};
 
 private:
   /**

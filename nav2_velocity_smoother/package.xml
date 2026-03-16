@@ -12,6 +12,10 @@
   <depend>rclcpp</depend>
   <depend>rclcpp_components</depend>
   <depend>geometry_msgs</depend>
+  <depend>gazebo_msgs</depend>
+  <depend>nav_msgs</depend>
+  <depend>sentry_msgs</depend>
+  <depend>tf2</depend>
   <depend>nav2_util</depend>
 
   <test_depend>ament_lint_common</test_depend>

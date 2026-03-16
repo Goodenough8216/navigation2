@@ -13,6 +13,7 @@
 // limitations under the License.
 
 #include <chrono>
+#include <algorithm>
 #include <vector>
 #include <memory>
 #include <string>
@@ -26,6 +27,10 @@
 #include "nav2_util/node_utils.hpp"
 #include "nav2_util/geometry_utils.hpp"
 #include "nav2_controller/controller_server.hpp"
+#include "nav_msgs/msg/odometry.hpp"
+#include "gazebo_msgs/msg/model_states.hpp"
+#include "std_msgs/msg/float64.hpp"
+#include "tf2/utils.h"
 
 using namespace std::chrono_literals;
 using rcl_interfaces::msg::ParameterType;
@@ -58,6 +63,7 @@ ControllerServer::ControllerServer(const rclcpp::NodeOptions & options)
   declare_parameter("min_theta_velocity_threshold", rclcpp::ParameterValue(0.0001));
 
   declare_parameter("speed_limit_topic", rclcpp::ParameterValue("speed_limit"));
+  declare_parameter("robot_model_name", rclcpp::ParameterValue("mbot"));
 
   declare_parameter("failure_tolerance", rclcpp::ParameterValue(0.0));
   declare_parameter("publish_zero_velocity", rclcpp::ParameterValue(true));
@@ -119,6 +125,7 @@ ControllerServer::on_configure(const rclcpp_lifecycle::State & /*state*/)
 
   std::string speed_limit_topic;
   get_parameter("speed_limit_topic", speed_limit_topic);
+  get_parameter("robot_model_name", robot_model_name_);
   get_parameter("failure_tolerance", failure_tolerance_);
   get_parameter("publish_zero_velocity", publish_zero_velocity_);
 
@@ -196,6 +203,24 @@ ControllerServer::on_configure(const rclcpp_lifecycle::State & /*state*/)
 
   odom_sub_ = std::make_unique<nav_2d_utils::OdomSubscriber>(node);
   vel_publisher_ = create_publisher<geometry_msgs::msg::Twist>("cmd_vel", 1);
+  desired_yaw_pub_ = create_publisher<std_msgs::msg::Float64>("desired_yaw", 1);
+  current_yaw_pub_ = create_publisher<std_msgs::msg::Float64>("current_yaw", 1);
+  odom_yaw_sub_ = create_subscription<nav_msgs::msg::Odometry>(
+    "/odometry_imu", rclcpp::SensorDataQoS(),
+    std::bind(&ControllerServer::odomCallback, this, std::placeholders::_1));
+  model_states_sub_ = create_subscription<gazebo_msgs::msg::ModelStates>(
+    "/gazebo/model_states", rclcpp::QoS(10),
+    std::bind(&ControllerServer::modelStatesCallback, this, std::placeholders::_1));
+
+  auto timer_period = std::chrono::duration<double>(1.0 / controller_frequency_);
+  zero_velocity_timer_ = create_wall_timer(
+    timer_period,
+    [this]() {
+      if (continuous_zero_velocity_active_) {
+        publishZeroVelocity();
+      }
+    });
+  zero_velocity_timer_->cancel();
 
   // Create the action server that we implement with our followPath method
   action_server_ = std::make_unique<ActionServer>(
@@ -225,6 +250,8 @@ ControllerServer::on_activate(const rclcpp_lifecycle::State & /*state*/)
     it->second->activate();
   }
   vel_publisher_->on_activate();
+  desired_yaw_pub_->on_activate();
+  current_yaw_pub_->on_activate();
   action_server_->activate();
 
   auto node = shared_from_this();
@@ -258,7 +285,10 @@ ControllerServer::on_deactivate(const rclcpp_lifecycle::State & /*state*/)
    */
   costmap_ros_->deactivate();
 
+  stopContinuousZeroVelocity();
   publishZeroVelocity();
+  desired_yaw_pub_->on_deactivate();
+  current_yaw_pub_->on_deactivate();
   vel_publisher_->on_deactivate();
   dyn_params_handler_.reset();
 
@@ -286,11 +316,17 @@ ControllerServer::on_cleanup(const rclcpp_lifecycle::State & /*state*/)
 
 
   // Release any allocated resources
+  stopContinuousZeroVelocity();
   action_server_.reset();
   odom_sub_.reset();
   costmap_thread_.reset();
   vel_publisher_.reset();
+  desired_yaw_pub_.reset();
+  current_yaw_pub_.reset();
   speed_limit_sub_.reset();
+  odom_yaw_sub_.reset();
+  model_states_sub_.reset();
+  zero_velocity_timer_.reset();
 
   return nav2_util::CallbackReturn::SUCCESS;
 }
@@ -358,6 +394,9 @@ void ControllerServer::computeControl()
 {
   std::lock_guard<std::mutex> lock(dynamic_params_lock_);
 
+  // A new control request arrived, stop any previous continuous zero command mode.
+  stopContinuousZeroVelocity();
+
   RCLCPP_INFO(get_logger(), "Received a goal, begin computing control effort.");
 
   try {
@@ -393,7 +432,7 @@ void ControllerServer::computeControl()
       if (action_server_->is_cancel_requested()) {
         RCLCPP_INFO(get_logger(), "Goal was canceled. Stopping the robot.");
         action_server_->terminate_all();
-        publishZeroVelocity();
+        startContinuousZeroVelocity();
         return;
       }
 
@@ -409,7 +448,10 @@ void ControllerServer::computeControl()
 
       if (isGoalReached()) {
         RCLCPP_INFO(get_logger(), "Reached the goal!");
-        break;
+        std::shared_ptr<Action::Result> result = std::make_shared<Action::Result>();
+        action_server_->succeeded_current(result);
+        startContinuousZeroVelocity();
+        return;
       }
 
       if (!loop_rate.sleep()) {
@@ -432,10 +474,6 @@ void ControllerServer::computeControl()
   }
 
   RCLCPP_DEBUG(get_logger(), "Controller succeeded, setting result");
-
-  if (publish_zero_velocity_) {
-    publishZeroVelocity();
-  }
 
   // TODO(orduno) #861 Handle a pending preemption and set controller name
   action_server_->succeeded_current();
@@ -565,9 +603,28 @@ void ControllerServer::updateGlobalPath()
 
 void ControllerServer::publishVelocity(const geometry_msgs::msg::TwistStamped & velocity)
 {
+  publishYawFromAngularVel(velocity.twist.angular.z);
+
   auto cmd_vel = std::make_unique<geometry_msgs::msg::Twist>(velocity.twist);
   if (vel_publisher_->is_activated() && vel_publisher_->get_subscription_count() > 0) {
     vel_publisher_->publish(std::move(cmd_vel));
+  }
+}
+
+void ControllerServer::startContinuousZeroVelocity()
+{
+  continuous_zero_velocity_active_ = true;
+  publishZeroVelocity();
+  if (zero_velocity_timer_) {
+    zero_velocity_timer_->reset();
+  }
+}
+
+void ControllerServer::stopContinuousZeroVelocity()
+{
+  continuous_zero_velocity_active_ = false;
+  if (zero_velocity_timer_) {
+    zero_velocity_timer_->cancel();
   }
 }
 
@@ -583,6 +640,96 @@ void ControllerServer::publishZeroVelocity()
   velocity.header.frame_id = costmap_ros_->getBaseFrameID();
   velocity.header.stamp = now();
   publishVelocity(velocity);
+  // publishYawFromAngularVel(velocity.twist.angular.z);
+
+  // auto cmd_vel = std::make_unique<geometry_msgs::msg::Twist>(velocity.twist);
+  // if (vel_publisher_->is_activated() && vel_publisher_->get_subscription_count() > 0) {
+  //   vel_publisher_->publish(std::move(cmd_vel));
+  // }
+}
+
+void ControllerServer::publishYawFromAngularVel(const double angular_vel)
+{
+  if (!has_odom_) {
+    calculateInterval(last_yaw_update_time_);
+    return;
+  }
+
+  double dt = calculateInterval(last_yaw_update_time_);
+  if (dt <= 0.0 && controller_frequency_ > 0.0) {
+    dt = 1.0 / controller_frequency_;
+  }
+
+  double current_yaw = 0.0;
+  {
+    std::lock_guard<std::mutex> lock(odom_mutex_);
+    current_yaw = current_yaw_;
+  }
+
+  constexpr double pi = 3.14159265358979323846;
+  double desired_yaw = current_yaw + angular_vel * dt;
+  while (desired_yaw > pi) {
+    desired_yaw -= 2.0 * pi;
+  }
+  while (desired_yaw < -pi) {
+    desired_yaw += 2.0 * pi;
+  }
+
+  if (desired_yaw_pub_->is_activated()) {
+    std_msgs::msg::Float64 desired_yaw_msg;
+    desired_yaw_msg.data = desired_yaw;
+    desired_yaw_pub_->publish(desired_yaw_msg);
+  }
+
+  if (current_yaw_pub_->is_activated()) {
+    std_msgs::msg::Float64 current_yaw_msg;
+    current_yaw_msg.data = current_yaw;
+    current_yaw_pub_->publish(current_yaw_msg);
+  }
+}
+
+void ControllerServer::odomCallback(const nav_msgs::msg::Odometry::SharedPtr msg)
+{
+  std::lock_guard<std::mutex> lock(odom_mutex_);
+  current_yaw_ = tf2::getYaw(msg->pose.pose.orientation);
+  has_odom_ = true;
+}
+
+void ControllerServer::modelStatesCallback(const gazebo_msgs::msg::ModelStates::SharedPtr msg)
+{
+  if (msg->pose.empty() || msg->name.empty()) {
+    return;
+  }
+
+  size_t pose_idx = 0;
+  if (!robot_model_name_.empty()) {
+    auto it = std::find(msg->name.begin(), msg->name.end(), robot_model_name_);
+    if (it == msg->name.end()) {
+      return;
+    }
+    pose_idx = static_cast<size_t>(std::distance(msg->name.begin(), it));
+  }
+
+  if (pose_idx >= msg->pose.size()) {
+    return;
+  }
+
+  std::lock_guard<std::mutex> lock(odom_mutex_);
+  current_yaw_ = tf2::getYaw(msg->pose[pose_idx].orientation);
+  has_odom_ = true;
+}
+
+double ControllerServer::calculateInterval(rclcpp::Time & last_time)
+{
+  rclcpp::Time current_time = now();
+  double interval = 0.0;
+
+  if (last_time.nanoseconds() != 0) {
+    interval = (current_time - last_time).seconds();
+  }
+
+  last_time = current_time;
+  return interval;
 }
 
 bool ControllerServer::isGoalReached()
@@ -661,6 +808,10 @@ ControllerServer::dynamicParametersCallback(std::vector<rclcpp::Parameter> param
         min_theta_velocity_threshold_ = parameter.as_double();
       } else if (name == "failure_tolerance") {
         failure_tolerance_ = parameter.as_double();
+      }
+    } else if (type == ParameterType::PARAMETER_STRING) {
+      if (name == "robot_model_name") {
+        robot_model_name_ = parameter.as_string();
       }
     }
 

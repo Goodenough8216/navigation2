@@ -112,18 +112,19 @@ bt_navigator_navigate_to_pose_rclcpp_node:
 # rpp控制器配置
 controller_server:
   ros__parameters:
-    controller_frequency: 20.0 # 20.0
+    controller_frequency: 80.0 # 20.0
     min_x_velocity_threshold: 0.001
     min_y_velocity_threshold: 0.5
     min_theta_velocity_threshold: 0.001
     progress_checker_plugins: ["progress_checker"] # progress_checker_plugin: "progress_checker" For Humble and older
     goal_checker_plugins: ["goal_checker"]
     controller_plugins: ["FollowPath"]
+    publish_zero_velocity: true
 
     progress_checker:
       plugin: "nav2_controller::SimpleProgressChecker"
       required_movement_radius: 0.5
-      movement_time_allowance: 10.0
+      movement_time_allowance: 1.0
     goal_checker:
       plugin: "nav2_controller::SimpleGoalChecker"
       xy_goal_tolerance: 0.25
@@ -131,7 +132,7 @@ controller_server:
       stateful: True
     FollowPath:
       plugin: "nav2_regulated_pure_pursuit_controller::RegulatedPurePursuitController"
-      desired_linear_vel: 1.5 # 0.5
+      desired_linear_vel: 1.5 # 0.5 # 1.5
       # max_linear_vel: 2.0 # 0.5
       # min_linear_vel: -2.0 # -0.5
       # max_angular_vel: 2.5
@@ -140,7 +141,7 @@ controller_server:
       # max_linear_decel: -2.5
       max_angular_accel: 3.2 # 3.2 # 角加速度是加速和防过冲制动的。太大不好制动，震荡；太小加速慢
       # max_angular_decel: -3.2
-      lookahead_dist: 1.2 # 0.6
+      lookahead_dist: 1.2 # 0.6 # 1.2
       min_lookahead_dist: 0.3
       max_lookahead_dist: 0.9
       lookahead_time: 1.5
@@ -302,8 +303,8 @@ controller_server:
 local_costmap:
   local_costmap:
     ros__parameters:
-      update_frequency: 5.0
-      publish_frequency: 2.0
+      update_frequency: 20.0 # 5.0
+      publish_frequency: 20.0 #2.0
       global_frame: world
       robot_base_frame: base_link
       use_sim_time: True
@@ -325,8 +326,8 @@ local_costmap:
 
       inflation_layer:
         plugin: "nav2_costmap_2d::InflationLayer"
-        cost_scaling_factor: 0.1 # 3.0
-        inflation_radius: 0.1 # 0.55
+        cost_scaling_factor: 3.0 # 3.0
+        inflation_radius: 0.3 # 0.55
 
       always_send_full_costmap: True
       
@@ -485,7 +486,7 @@ waypoint_follower:
 velocity_smoother:
   ros__parameters:
     use_sim_time: True
-    smoothing_frequency: 20.0 # 20.0
+    smoothing_frequency: 80.0 # 20.0
     scale_velocities: False
     feedback: "OPEN_LOOP"
     max_velocity: [2.5, 0.0, 3.0] # 0.26 0 1.0
@@ -494,5 +495,5 @@ velocity_smoother:
     max_decel: [-2.5, 0.0, -3.2]
     odom_topic: "odom"
     odom_duration: 0.1
-    deadband_velocity: [0.0, 0.0, 0.0]
+    deadband_velocity: [0.05, 0.05, 0.05]
     velocity_timeout: 1.0
