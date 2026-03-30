@@ -56,10 +56,14 @@ protected:
   static double pose_distance(
     const geometry_msgs::msg::Pose2D &,
     const geometry_msgs::msg::Pose2D &);
+  static double pose_angle_distance(
+    const geometry_msgs::msg::Pose2D &,
+    const geometry_msgs::msg::Pose2D &);
 
   rclcpp::Clock::SharedPtr clock_;
 
   double radius_;
+  double angle_threshold_{0.5};
   rclcpp::Duration time_allowance_{0, 0};
 
   geometry_msgs::msg::Pose2D baseline_pose_;

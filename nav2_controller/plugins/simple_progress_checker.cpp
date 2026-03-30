@@ -41,9 +41,12 @@ void SimpleProgressChecker::initialize(
   nav2_util::declare_parameter_if_not_declared(
     node, plugin_name + ".required_movement_radius", rclcpp::ParameterValue(0.5));
   nav2_util::declare_parameter_if_not_declared(
+    node, plugin_name + ".required_movement_angle", rclcpp::ParameterValue(0.2));
+  nav2_util::declare_parameter_if_not_declared(
     node, plugin_name + ".movement_time_allowance", rclcpp::ParameterValue(10.0));
   // Scale is set to 0 by default, so if it was not set otherwise, set to 0
   node->get_parameter_or(plugin_name + ".required_movement_radius", radius_, 0.5);
+  node->get_parameter_or(plugin_name + ".required_movement_angle", angle_threshold_, 0.5);
   double time_allowance_param = 0.0;
   node->get_parameter_or(plugin_name + ".movement_time_allowance", time_allowance_param, 10.0);
   time_allowance_ = rclcpp::Duration::from_seconds(time_allowance_param);
@@ -81,7 +84,8 @@ void SimpleProgressChecker::resetBaselinePose(const geometry_msgs::msg::Pose2D &
 
 bool SimpleProgressChecker::isRobotMovedEnough(const geometry_msgs::msg::Pose2D & pose)
 {
-  return pose_distance(pose, baseline_pose_) > radius_;
+  return pose_distance(pose, baseline_pose_) > radius_ ||
+         pose_angle_distance(pose, baseline_pose_) > angle_threshold_;
 }
 
 double SimpleProgressChecker::pose_distance(
@@ -92,6 +96,14 @@ double SimpleProgressChecker::pose_distance(
   double dy = pose1.y - pose2.y;
 
   return std::hypot(dx, dy);
+}
+
+double SimpleProgressChecker::pose_angle_distance(
+  const geometry_msgs::msg::Pose2D & pose1,
+  const geometry_msgs::msg::Pose2D & pose2)
+{
+  const double dtheta = pose1.theta - pose2.theta;
+  return std::fabs(std::atan2(std::sin(dtheta), std::cos(dtheta)));
 }
 
 rcl_interfaces::msg::SetParametersResult
@@ -105,6 +117,8 @@ SimpleProgressChecker::dynamicParametersCallback(std::vector<rclcpp::Parameter> 
     if (type == ParameterType::PARAMETER_DOUBLE) {
       if (name == plugin_name_ + ".required_movement_radius") {
         radius_ = parameter.as_double();
+      } else if (name == plugin_name_ + ".required_movement_angle") {
+        angle_threshold_ = parameter.as_double();
       } else if (name == plugin_name_ + ".movement_time_allowance") {
         time_allowance_ = rclcpp::Duration::from_seconds(parameter.as_double());
       }

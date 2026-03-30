@@ -197,7 +197,7 @@ void RegulatedPurePursuitController::configure(
     allow_reversing_ = false;
   }
 
-  goal_pose_reached_ = false;
+  goal_yaw_reached_ = true;
 
   global_path_pub_ = node->create_publisher<nav_msgs::msg::Path>("received_global_plan", 1);
   carrot_pub_ = node->create_publisher<geometry_msgs::msg::PointStamped>("lookahead_point", 1);
@@ -360,11 +360,12 @@ geometry_msgs::msg::TwistStamped RegulatedPurePursuitController::computeVelocity
     // 到目标点，就不用考虑方向了，没意义，直接停车
     linear_vel = 0.0;
     angular_vel = 0.0;
-    goal_pose_reached_ = true; // 目标到达了，也意味着开始新的路径了，下一次如果路径方向不对就先转向再走
-  } else if (goal_pose_reached_ && shouldRotateToPath(carrot_pose, angle_to_heading)) {
+    goal_yaw_reached_ = true; // 目标到达了，也意味着开始新的路径了，下一次如果路径方向不对就先转向再走
+    // std::cout << "Goal pose reached, stopping robot." << std::endl;
+  } else if (goal_yaw_reached_ && shouldRotateToPath(carrot_pose, angle_to_heading)) {
     rotateToHeading(linear_vel, angular_vel, angle_to_heading, speed);
-    goal_pose_reached_ = false;  
   } else {
+    goal_yaw_reached_ = false;  
     applyConstraints(
       curvature, speed,
       costAtPose(pose.pose.position.x, pose.pose.position.y), transformed_plan,
@@ -401,6 +402,7 @@ bool RegulatedPurePursuitController::shouldRotateToPath(
       angle_to_path = angle_to_reverse_path;
     }
   }
+  RCLCPP_INFO(logger_, "Angle to path: %f", angle_to_path);
   return (use_rotate_to_heading_ || allow_reversing_) && fabs(angle_to_path) > rotate_to_heading_min_angle_;
   // return use_rotate_to_heading_ && fabs(angle_to_path) > rotate_to_heading_min_angle_;
 }
@@ -422,14 +424,16 @@ void RegulatedPurePursuitController::rotateToHeading(
   linear_vel = 0.0;
   const double sign = angle_to_path > 0.0 ? 1.0 : -1.0;
   angular_vel = sign * rotate_to_heading_angular_vel_;
-
+  
   // // 打印angular_vel
   // RCLCPP_INFO(logger_, "Rotating to heading: angular_vel=%f", angular_vel);
   const double & dt = control_duration_;
   const double min_feasible_angular_speed = curr_speed.angular.z - max_angular_accel_ * dt;
   const double max_feasible_angular_speed = curr_speed.angular.z + max_angular_accel_ * dt;
-  angular_vel = std::clamp(angular_vel, min_feasible_angular_speed, max_feasible_angular_speed);
-  // // 打印日志，显示当前角速度curr_speed.angular.z和需要旋转的角度，还有angular_vel min_feasible_angular_speed max_feasible_angular_speed
+  std::cout << "min_feasible_angular_speed: " << min_feasible_angular_speed
+            << ", max_feasible_angular_speed: " << max_feasible_angular_speed << std::endl;
+  // angular_vel = std::clamp(angular_vel, min_feasible_angular_speed, max_feasible_angular_speed);
+  // 打印日志，显示当前角速度curr_speed.angular.z和需要旋转的角度，还有angular_vel min_feasible_angular_speed max_feasible_angular_speed
   // RCLCPP_INFO(
   //   logger_,
   //   "Rotating to heading: curr_speed.angular.z=%f, angle_to_path=%f, angular_vel=%f, min_feasible_angular_speed=%f, max_feasible_angular_speed=%f",
